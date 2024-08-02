@@ -1,0 +1,45 @@
+安装说明
+
+参考此连接： https://wiki.archlinux.org/title/Installation_guide
+
+总结：
+ 1. 选择安装媒体：
+    * liveCD：https://archlinux.org/download/
+    * 其他发行版本安装：https://wiki.archlinux.org/title/Install_Arch_Linux_from_existing_Linux
+ 2. 准备硬盘分区，至少3个分区：bootloader，rootfs，swap(optional)，另外推荐将home单独挂一个分区。
+    * BIOS系统，太老了不看。
+    * UEFI系统：
+        * 最简单的方式就是单独一个boot分区然后挂载到/boot目录上。
+          这种情况下kernel和bootloader会在同一个分区。推荐最少1G，因为有kernel，fat32格式。
+          因为kernel暴露在fat32格式分区下，UEFI系统可以直接加载kernel而不用安装bootloader：https://wiki.archlinux.org/title/EFISTUB
+        * 或者单独EFI一个分区挂载到/efi目录上。
+          只安装bootloader，kernel另外放。推荐不少于500m, fat32格式。
+    * 如果要用LVM的话，也在此步搞搞好。
+ 3. 挂载分区，包括swap如果有的话。
+ 4. [opt] 使用reflector优化镜像：https://wiki.archlinux.org/title/Reflector
+ 5. pacstrap 安装基础包，除了手册上的基础包，还推荐安装一些等下要用的譬如vim、network-manger等。
+ 6. 生成fstab
+ 7. arch-chroot
+ 8. [opt] 调整时区
+ 9. [opt] locale gen
+ 10. [opt] hostname
+ 11. [opt] mkinitcpio，因为pacstrap已经跑过了，可以不用。
+ 12. root密码
+ 13. 重启
+ == 官方手册到上述即完成了 ==
+
+ 下面开始配置刚安装的archlinux
+ 1. 启用systemd-resolved，否则你没dns
+ 2. 启用安装的network-manager,如果没有装，可以启用systemd-networkd。
+    这里推荐network-manager的逻辑是后面要装KDE或GNOME桌面。如果没这个需求用systemd-networkd也挺好的。
+ 3. 如果有网了，可以直接用pacman安装桌面，我这里用kde,可以直接安装plasma组。
+ 4. 安装桌面管理，kde的话是sddm,gnome的话安装gdm
+ 5. 启用一下桌面管理器就能进桌面了：systemctl enable --now sddm
+ 6. 创建个人账户并设置密码：useradd -m guest; passwd guest
+ 7. 安装sudo：pacman -S sudo
+ 8. 把个人账户加到wheel组：usermod -aG wheel guest
+ 9. 配置sudo,给wheel组开放权限： EDITOR=vim visudo,然后uncomment %wheel那行
+ 10. 锁掉root账户： passwd -l root
+ 11. 重启就能进桌面了。
+
+
