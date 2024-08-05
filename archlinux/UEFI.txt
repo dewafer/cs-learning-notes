@@ -1,0 +1,16 @@
+什么是UEFI？
+
+这个问题困扰了我很久。
+因此推荐阅读此篇文章：
+https://www.happyassassin.net/posts/2014/01/25/uefi-boot-how-does-that-actually-work-then/
+
+UEFI是一套标准，包含：
+ * 一套可执行文件格式（EFI bootloader）
+ * GPT分区格式
+ * EFI系统文件（基本是FAT32）
+ * UEFI boot manager （启动菜单）
+
+ 强烈推荐阅读前文链接中的文章，读完有豁然开朗的感觉。
+ 文章的链接可以在archlinux wiki中UEFI项目页面中10 also see的第3个链接中找到。
+ 拦截的标题名为《UEFI boot: how does that actually work, then? - A blog post by AdamW》
+ 
