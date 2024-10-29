@@ -1,0 +1,29 @@
+在PVE LXC中启用iscsi target。
+
+概念：
+1. iscsi的提供服务的端(server)叫: iscsi target，接入远端服务的(client)叫iscsi initiator。
+2. LIO: 从linux 3.1开始已包含在内核中：https://wiki.archlinux.org/title/ISCSI/LIO
+
+安装：
+1. host 安装 targetcli-fb: apt-get install -y targetcli-fb
+2. 新建一个 privileged container， 不要启动
+3. host 上 vim /etc/pve/lxc/{ID}.conf 增加以下项目：
+    lxc.apparmor.profile: unconfined
+    lxc.cap.drop:
+4. 启动容器
+5. 在host上 pct push $VMID /boot/config-$(uname -r) /boot/config-$(uname -r)
+6. systemctl unmask sys-kernel-config.mount
+7. 容器内安装 targetcli-fb: apt-get update && apt-get install -y targetcli-fb
+
+----
+
+备注：
+1. 因为targetcli需要加载target_core_mod、iscsi_target_mod等kernel modules，但尝试了使用 
+    pct set $VMID --mp0 /usr/lib/modules/$(uname -r),mp=/lib/modules/$(uname -r),ro=1,backup=0 
+    和 
+    lxc.mount.entry = /path/of/folder/on/host path/to/mount/point/in/container none ro.bind,make=dir 0 0
+    将host的linux moudles挂入容器都不行。
+2. 参考文档：
+    https://stackoverflow.com/questions/63427047/proxmox-lxc-add-add-linux-kernel-modules/68573587#68573587
+    https://www.enricobassetti.it/2023/05/proxmox-lxc-systemd-and-linux-capabilities/
+

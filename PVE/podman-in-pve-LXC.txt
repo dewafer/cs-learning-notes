@@ -1,0 +1,8 @@
+在PVE中安装podman。
+
+参考 [iscsi-target-in-pve-LXC.txt]， 关键点是需要 
+    lxc.apparmor.profile: unconfined
+    lxc.cap.drop:
+
+1. 使用 [iscsi-target-in-pve-LXC.txt] 中的方法创建特权lxc容器。
+2. 在容器中安装：apt-get install -y podman podman-docker
