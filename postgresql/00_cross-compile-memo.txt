@@ -1,0 +1,129 @@
+跨架构编译 postgresql
+
+故事是这样的，公司的数据库用的是 postgresql，版本有10，也有16的。
+按安全要求，访问数据库只能通过堡垒机进行。
+
+但堡垒机上只安装了版本10的 postgresql的client。
+如果使用版本10的client访问版本10以上的服务器，会有各种大大小小的问题。
+
+正常的解决方案是在堡垒机上安装更新版本的客户端。
+但，堡垒机上没有root权限，也没给开sudo。
+
+更高权限一时半会申请不下来，怎么办？自己编译一个吧。
+但堡垒机上也没给安装 build-essential；公司给发的macbook pro是M系芯片，aarch64架构的，服务器却是x86_64的，怎么办？
+
+用docker吧。（这里用podman演示，我用习惯了，效果几乎是一致的。）
+
+已知公司服务器测试环境用的是centos 7，生产环境用的是ubuntu 18.04。
+
+分别起对应的容器，但因为服务器环境是x86_64，因此我们需要指定架构，然后把工作目录mount进去。
+注意，这里容器内mount的位置需要和服务器上的你的HOME目录绝对路径一致。
+譬如，我在服务器上的用户名为tonwan，HOME目录绝对路径是/home/tonwan，则容器中的路径也必须一致。
+
+podman run -ti --arch amd64 -v $(pwd):/home/tonwan --workdir /home/tonwan centos:7
+
+ubuntu的话则是：
+
+podman run -ti --arch amd64 -v $(pwd):/home/tonwan --workdir /home/tonwan ubuntu:18.04
+
+进入容器之后，就是准备编译环境。
+首先按需求替换centos和ubuntu的安装的源，我这里替换成了阿里云的。如果网络环境好，可以跳过这一步。
+
+centos的：
+
+rm -f /etc/yum.repos.d/*
+curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo
+
+ubuntu的：（这里顺带关闭了https的验证）
+
+rm -f /etc/apt/sources.list
+cat <<EOF > /etc/apt/sources.list
+deb [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic main restricted universe multiverse
+deb-src [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic main restricted universe multiverse
+
+deb [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-security main restricted universe multiverse
+deb-src [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-security main restricted universe multiverse
+
+deb [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-updates main restricted universe multiverse
+deb-src [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-updates main restricted universe multiverse
+
+# deb [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-proposed main restricted universe multiverse
+# deb-src [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-proposed main restricted universe multiverse
+
+deb [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-backports main restricted universe multiverse
+deb-src [trusted=yes] https://mirrors.aliyun.com/ubuntu/ bionic-backports main restricted universe multiverse
+EOF
+
+cat <<EOF > /etc/apt/apt.conf.d/99verify-peer.conf
+Acquire { https::Verify-Peer false }
+EOF
+
+完了更新源并安装必要依赖。
+
+centos的：
+
+yum groupinstall -y 'Development Tools'
+yum install -y libicu-devel readline-devel zlib-devel
+
+ubuntu的：
+
+apt-get update
+apt-get install -y ca-certificates build-essential libreadline-dev zlib1g zlib1g-dev libicu-dev pkg-config
+
+然后下载源代码并编译postgresql，我这里编译的是16.4版本的。
+
+./build.sh
+
+build脚本内容如下：（需要放在工作目录下，命名为build.sh）
+
+#!/bin/bash
+
+set -e
+
+cd $(dirname $0)
+
+# 使用curl下载并解压缩源代码
+if [[ ! -d "postgresql-16.4" ]]; then
+    if [[ ! -f "postgresql-16.4.tar.bz2" ]]; then
+        echo 'Downloading PostgreSQL 16.4...'
+        curl -O https://ftp.postgresql.org/pub/source/v16.4/postgresql-16.4.tar.bz2
+    fi
+    echo 'Extracting PostgreSQL 16.4...'
+    tar -xf postgresql-16.4.tar.bz2
+fi
+
+cd postgresql-16.4
+
+# 配置时将安装路径指定为当前目录，即用户的home目录下的postgresql-16.4中。
+# 因为没有root权限无法安装到/usr/share中
+echo 'Building PostgreSQL 16.4...'
+./configure --prefix=$(pwd)
+
+# make，使用4个进程并行加速
+make -j4
+
+# 选择性安装
+echo 'Installing PostgreSQL 16.4...'
+make -C src/bin install
+make -C src/include install
+make -C src/interfaces install
+make -C doc install
+
+cd ..
+
+# 将编译安装完的文件打包
+echo 'Packaging PostgreSQL 16.4...'
+PKG_NAME=postgresql-16.4_build_$(date +%Y%m%d%H%M%S).tar.gz
+echo $PKG_NAME
+tar -czf $PKG_NAME postgresql-16.4
+
+echo 'Done!'
+
+在容器中跑完脚本后退出容器，打开用户目录，可以看到当前目录下有个postgresql-16.4_build_YYYYMMDDHHMMSS.tar.gz的文件。
+通过scp将该文件上传至服务器中，并解压缩到对应的目录下即可使用。
+
+是不是很骚的操作。
+
+完。
+
+注：postgresql的编译安装官方说明：https://www.postgresql.org/docs/current/installation.html
