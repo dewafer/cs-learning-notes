@@ -1,0 +1,61 @@
+# 演示如何用cgroup控制cpu配额
+
+本文演示如何使用cgroup控制cpu的配额。
+
+使用podman启动一个ubuntu，此容器已提权，
+podman run -ti --rm --privileged --cgroupns=host ubuntu /bin/bash
+
+安装tmux，htop：
+apt update && apt install -y tmux htop
+
+查看cgroup2是否已经装载，默认装载在/sys/fs/cgroup
+findmnt -t cgroup2
+
+进入cgroup2的mount point
+cd /sys/fs/cgroup
+
+// 确保为子组启用cpu控制器
+// echo +cpu +memory > cgroup.subtree_control
+
+// 创建子组
+// mkdir group1
+
+// 移除子组，注意移除时子组内不可有控制的进程，否则会报设备忙
+// rmdir group1
+
+// 将进程移入子组
+// echo <pid> > group1/cgroup.procs
+
+失败了，容器中可以创建子组，但是无法让子组控制memory。
+一旦子组控制加上了cpu，则无法将指定的进程移入子组。
+
+----
+
+# 创建子组
+mkdir -p /sys/fs/cgroup/cgroup1
+mkdir -p /sys/fs/cgroup/cgroup2
+
+# 分配weight
+echo 100 > /sys/fs/cgroup/cgroup1/cpu.weight
+echo 30 > /sys/fs/cgroup/cgroup2/cpu.weight
+
+# 锁定核心
+echo 0 > /sys/fs/cgroup/cgroup1/cpuset.cpus
+echo 0 > /sys/fs/cgroup/cgroup2/cpuset.cpus
+
+# 启动进程
+sha256sum /dev/urandom > /dev/null &
+echo $! > /tmp/pid1
+
+sha256sum /dev/urandom > /dev/null &
+echo $! > /tmp/pid2
+
+# 获取进程 ID
+pid1=$(cat /tmp/pid1)
+pid2=$(cat /tmp/pid2)
+
+# 将进程移入 cgroup
+echo $pid1 > /sys/fs/cgroup/cgroup1/cgroup.procs
+echo $pid2 > /sys/fs/cgroup/cgroup2/cgroup.procs
+
+htop
