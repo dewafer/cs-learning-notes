@@ -208,3 +208,36 @@ echo 21 > /sys/fs/cgroup/cgroup2/cpu.weight
 
 查看cpu用量：
 htop
+
+
+----
+
+注释：
+
+使用以下python脚本可以模拟多线程，注意需要安装python
+apt install -y python3
+
+===========
+import threading
+import math
+import os
+
+def cpu_stress():
+    print(f"Thread {threading.current_thread().name} in Process {os.getpid()}")
+    while True:
+        math.sqrt(12345)  # 模拟计算任务
+
+# 创建多个线程
+threads = []
+for _ in range(4):  # 根据核心数调整线程数量
+    t = threading.Thread(target=cpu_stress)
+    t.start()
+    threads.append(t)
+
+# 打印主线程信息
+print(f"Main Process ID: {os.getpid()}, Active Threads: {threading.active_count()}")
+
+# 等待线程完成（实际上不会结束）
+for t in threads:
+    t.join()
+===========
