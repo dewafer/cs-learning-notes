@@ -2,11 +2,14 @@
 
 本文演示如何使用cgroup控制cpu的配额。
 
-使用podman启动一个ubuntu，此容器已提权，
-podman run -ti --rm --privileged --cgroupns=host ubuntu /bin/bash
+使用podman启动一个ubuntu，此容器已提权。
+podman run -ti --rm --privileged ubuntu /bin/bash
 
 安装tmux，htop：
 apt update && apt install -y tmux htop
+
+opt: 安装测试工具
+apt update && apt install -y stress
 
 查看cgroup2是否已经装载，默认装载在/sys/fs/cgroup
 findmnt -t cgroup2
@@ -14,22 +17,23 @@ findmnt -t cgroup2
 进入cgroup2的mount point
 cd /sys/fs/cgroup
 
-// 确保为子组启用cpu控制器
-// echo +cpu +memory > cgroup.subtree_control
+== 容器中演示预备 ==
 
-// 创建子组
-// mkdir group1
+因为在cgroups v2里面，任何有进程的组必须是叶节点，
+如果一个组里已经有了进程，则无法创建子组（其实可以创建但无法将进程移动至子组中）。
+为了演示，我们需要创建一个子组，然后把当前组中的进程转移到该子组中，
+然后才能创建其他子组。
 
-// 移除子组，注意移除时子组内不可有控制的进程，否则会报设备忙
-// rmdir group1
-
-// 将进程移入子组
-// echo <pid> > group1/cgroup.procs
-
-失败了，容器中可以创建子组，但是无法让子组控制memory。
-一旦子组控制加上了cpu，则无法将指定的进程移入子组。
+# 创建临时子组
+mkdir -p /sys/fs/cgroup/tmp
+# 迁移父组
+for i in $(cat /sys/fs/cgroup/cgroup.procs); do echo $i > /sys/fs/cgroup/tmp/cgroup.procs; done
+# 启动子组控制权限
+for i in $(cat /sys/fs/cgroup/cgroup.controllers); do echo +$i > /sys/fs/cgroup/cgroup.subtree_control; done
 
 ----
+
+示例
 
 # 创建子组
 mkdir -p /sys/fs/cgroup/cgroup1
@@ -58,4 +62,149 @@ pid2=$(cat /tmp/pid2)
 echo $pid1 > /sys/fs/cgroup/cgroup1/cgroup.procs
 echo $pid2 > /sys/fs/cgroup/cgroup2/cgroup.procs
 
+htop
+
+# 移除子组，注意移除时子组内不可有控制的进程，否则会报设备忙
+rmdir /sys/fs/cgroup/cgroup{1,2}
+
+---
+
+演示场景1
+
+场景：1个进程吃4个CPU，但是只给了2个core。
+
+在k8s中，cpu.limit会转换为cgroup v2中的cpu.max，转换公式如下：
+
+cpu.max = <quota> <period>
+quota = cpu.limit × period
+
+period = 100000 微秒（默认值，即 100ms）
+
+== 注意事项 ==
+默认 period 值
+Kubernetes 和容器运行时通常使用默认的 period 值 100000 微秒（100ms）。
+这个值可以通过容器运行时的配置进行调整，但通常不建议修改。
+
+无 cpu limit 的情况
+如果未设置 cpu limit，Kubernetes 不会对 CPU 使用进行硬限制，
+cpu.max 通常会被设置为：max 100000
+表示不限制 CPU 使用量。
+
+cgroup v1 的区别
+在使用 cgroup v1 的系统中，cpu limit 会被映射到 
+cpu.cfs_quota_us 和 cpu.cfs_period_us 文件，而不是 cpu.max。
+
+=====
+
+安装stress进行演示：
+apt install -y stress
+
+运行：
+stress --cpu 4 &
+STRESS_PID=$!
+
+创建子组并将进程移入子组：
+mkdir -p /sys/fs/cgroup/cgroup1
+for pid in $(pgrep -P $STRESS_PID); do
+    echo $pid | tee /sys/fs/cgroup/cgroup1/cgroup.procs
+done
+
+查看cpu用量：
+htop
+
+限制2个core
+echo 200000 100000 > /sys/fs/cgroup/cgroup1/cpu.max
+
+查看cpu用量：
+htop
+
+
+---
+
+演示场景2
+
+场景：两个进程竞争同一个cpu，但分配了不同的cpu.request：
+1个进程给了0.5，一个进程个了2。
+
+=====
+在k8s中，cpu.request会映射到cgroup v2的cpu.weight。
+
+Kubernetes 使用以下公式将 cpu.request 转换为 cpu.weight：
+cpu.weight = 2 + (cpu.request × 10000 / 1024)
+
+cpu.request：容器请求的 CPU 数量（以 vCPU 为单位）。
+10000：cgroups v2 中的最大权重值。
+1024：Kubernetes 的标准化比例（1 vCPU = 1024 shares）。
+
+
+cpu.weight 的作用
+CPU 争用时：
+cpu.weight 决定容器在 CPU 争用时的优先级。
+权重越高，容器分配到的 CPU 时间越多。
+CPU 空闲时：
+如果节点上的 CPU 资源充足，容器可以使用超过 cpu.request 的 CPU。
+
+
+注意事项
+默认值：
+如果未设置 cpu.request，Kubernetes 会为容器分配默认的 cpu.weight，通常为 100。
+cpu.limit 的影响：
+如果设置了 cpu.limit，Kubernetes 会同时配置 cgroups 的 cpu.max，限制容器的最大 CPU 使用量。
+非线性映射：
+cpu.weight 的范围是 1 到 10000，但 Kubernetes 的 cpu.request 是以 vCPU 为单位的浮点数，因此映射关系是非线性的。
+
+示例 1：cpu.request = 0.5
+cpu.weight = 2 + (0.5 × 10000 / 1024)
+           ≈ 2 + 4.88
+           ≈ 7
+对应的 cpu.weight 为 7。
+
+示例 2：cpu.request = 2
+cpu.weight = 2 + (2 × 10000 / 1024)
+           ≈ 2 + 19.53
+           ≈ 21
+对应的 cpu.weight 为 21。
+
+
+=====
+
+安装stress进行演示：
+apt install -y stress
+
+运行：
+stress --cpu 2 &
+STRESS_PID=$!
+
+查看cpu用量：
+htop
+
+分别创建2个子组，然后将进程移入对应子组
+mkdir -p /sys/fs/cgroup/cgroup{1,2}
+pgrep -P $STRESS_PID | sed -n '1p' > /sys/fs/cgroup/cgroup1/cgroup.procs
+pgrep -P $STRESS_PID | sed -n '2p' > /sys/fs/cgroup/cgroup2/cgroup.procs
+
+查看cpu用量：
+htop
+
+设置weight
+echo 7 > /sys/fs/cgroup/cgroup1/cpu.weight
+echo 21 > /sys/fs/cgroup/cgroup2/cpu.weight
+
+查看cpu用量：
+htop
+
+重置weight
+echo 100 | tee /sys/fs/cgroup/cgroup{1,2}/cpuset.cpus
+
+让2个进程竞争一个core
+echo 0 | tee /sys/fs/cgroup/cgroup{1,2}/cpuset.cpus
+
+查看cpu用量：
+htop
+
+设置weight
+echo 7 > /sys/fs/cgroup/cgroup1/cpu.weight
+echo 21 > /sys/fs/cgroup/cgroup2/cpu.weight
+
+查看cpu用量：
 htop
